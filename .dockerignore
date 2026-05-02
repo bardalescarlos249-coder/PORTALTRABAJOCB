@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.env
+backend/venv/
+backend/jobs.db
+.git/
+.gitignore
+frontend/

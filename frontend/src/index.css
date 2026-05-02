@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+}
+
+@layer components {
+  .apple-card {
+    @apply bg-apple-surface rounded-2xl shadow-apple transition-shadow duration-300 hover:shadow-apple-hover border border-apple-border/50;
+  }
+  
+  .apple-input {
+    @apply w-full rounded-xl border border-apple-border/80 bg-apple-surface/50 px-4 py-2.5 text-sm transition-all focus:border-apple-blue focus:outline-none focus:ring-2 focus:ring-apple-blue/20;
+  }
+
+  .apple-btn-primary {
+    @apply inline-flex items-center justify-center rounded-xl bg-apple-blue px-5 py-2.5 text-sm font-semibold text-white transition-all hover:bg-apple-blueHover focus:outline-none focus:ring-2 focus:ring-apple-blue/50 active:scale-[0.98];
+  }
+
+  .apple-btn-secondary {
+    @apply inline-flex items-center justify-center rounded-xl bg-gray-100 px-5 py-2.5 text-sm font-medium text-apple-text transition-all hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-200 active:scale-[0.98];
+  }
+
+  .apple-badge {
+    @apply inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-apple-textMuted;
+  }
+}
+
+/* Custom scrollbar for tables/containers */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent; 
+}
+::-webkit-scrollbar-thumb {
+  background: #d2d2d7; 
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #86868b; 
+}
