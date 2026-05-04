@@ -1,6 +1,7 @@
 """
-Get on Board Peru scraper - API REST pública (tech jobs).
+GetOnBoard Peru scraper - API REST pública (tech jobs).
 Endpoint: https://www.getonbrd.com/api/v0/search/jobs?query={keyword}&country=pe
+IMPORTANTE: La API devuelve URLs directas válidas en links.public_url.
 """
 import logging
 import json
@@ -20,7 +21,8 @@ class GetonboardScraper(BaseScraper):
     def build_search_url(self, filters: Dict[str, Any]) -> str:
         keyword = filters.get("keyword", "").strip()
         page = filters.get("_page", 1)
-        url = f"{API_BASE}/search/jobs?query={keyword}&country=pe&per_page=20&page={page}"
+        # Include expand=company,tags to get full URLs
+        url = f"{API_BASE}/search/jobs?query={keyword}&country=pe&per_page=20&page={page}&expand=company,tags"
         self.session.headers.update({
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -44,7 +46,6 @@ class GetonboardScraper(BaseScraper):
             data = json.loads(html)
             jobs_raw = []
 
-            # API puede devolver {"data": [...]} o directamente lista
             if isinstance(data, dict):
                 jobs_raw = data.get("data", []) or data.get("jobs", [])
             elif isinstance(data, list):
@@ -54,15 +55,31 @@ class GetonboardScraper(BaseScraper):
             for item in jobs_raw:
                 attrs = item.get("attributes", item)
                 title = attrs.get("title") or attrs.get("name", "")
+                if not title:
+                    continue
+
+                # Company name
                 company_data = attrs.get("company", {})
                 if isinstance(company_data, dict):
-                    company = company_data.get("name", "") or company_data.get("data", {}).get("attributes", {}).get("name", "")
+                    # Try nested attributes first (expanded response)
+                    nested = company_data.get("data", {})
+                    if isinstance(nested, dict):
+                        company = nested.get("attributes", {}).get("name", "")
+                    else:
+                        company = company_data.get("name", "")
                 else:
                     company = str(company_data)
 
+                # Modality
                 remote = attrs.get("remote_modality") or attrs.get("modality", "")
-                modality = "remoto" if remote in ("full", True, "true") else "híbrido" if remote == "partial" else "presencial"
+                if remote in ("full", True, "true"):
+                    modality = "remoto"
+                elif remote == "partial":
+                    modality = "híbrido"
+                else:
+                    modality = "presencial"
 
+                # Salary
                 min_salary = attrs.get("min_salary")
                 max_salary = attrs.get("max_salary")
                 currency = attrs.get("currency", "USD")
@@ -72,85 +89,47 @@ class GetonboardScraper(BaseScraper):
                 elif min_salary:
                     salary_raw = f"Desde {currency} {min_salary:,}"
 
-                url = item.get("links", {}).get("public_url")
+                # URL - CRITICAL: use public_url from links, fallback to web_url
+                links = item.get("links", {})
+                url = (
+                    links.get("public_url")
+                    or links.get("web_url")
+                    or attrs.get("public_url")
+                    or attrs.get("url")
+                )
+                # If still no URL, try to build from company slug + job slug
                 if not url:
-                    slug = item.get("id") or attrs.get("slug", "")
-                    url = f"{BASE}/jobs/{slug}" if slug else BASE
+                    company_slug = ""
+                    if isinstance(company_data, dict):
+                        nested_attrs = company_data.get("data", {}).get("attributes", {})
+                        company_slug = nested_attrs.get("slug", "")
+                    job_slug = attrs.get("slug", "")
+                    if company_slug and job_slug:
+                        url = f"{BASE}/{company_slug}/jobs/{job_slug}"
+                    else:
+                        # Last resort: link to getonboard search, not a broken detail page
+                        url = f"{BASE}/jobs"
 
+                # Skills/tags
                 tech_stack = attrs.get("tags", []) or []
                 if isinstance(tech_stack, list):
                     skills = [t.get("name", t) if isinstance(t, dict) else str(t) for t in tech_stack]
                 else:
                     skills = []
 
-                if title:
-                    jobs.append({
-                        "title": title,
-                        "company": company,
-                        "location_raw": "Perú (Remoto)" if modality == "remoto" else "Lima, Perú",
-                        "salary_raw": salary_raw,
-                        "modality": modality,
-                        "skills_detected": skills,
-                        "original_url": url,
-                        "sector_detected": "Tecnología",
-                    })
+                jobs.append({
+                    "title": title,
+                    "company": company,
+                    "location_raw": "Perú (Remoto)" if modality == "remoto" else "Lima, Perú",
+                    "salary_raw": salary_raw,
+                    "modality": modality,
+                    "skills_detected": skills,
+                    "original_url": url,
+                    "sector_detected": "Tecnología",
+                })
 
-            return jobs if jobs else self._mock_jobs()
+            return jobs
 
         except Exception as e:
             logger.error(f"[getonboard] parse error: {e}")
             return []
-
-    def _mock_jobs(self) -> List[Dict[str, Any]]:
-        return [
-            {
-                "title": "Backend Developer Python",
-                "company": "Culqi",
-                "location_raw": "Lima, Perú (Remoto)",
-                "salary_raw": "USD 2,500 - USD 4,000",
-                "modality": "remoto",
-                "skills_detected": ["Python", "Django", "PostgreSQL", "Docker"],
-                "original_url": "https://www.getonbrd.com/jobs/backend-developer-culqi",
-                "sector_detected": "Tecnología",
-            },
-            {
-                "title": "Data Scientist - Machine Learning",
-                "company": "Yape (BCP)",
-                "location_raw": "Lima, Perú (Híbrido)",
-                "salary_raw": "USD 3,000 - USD 5,000",
-                "modality": "híbrido",
-                "skills_detected": ["Python", "TensorFlow", "SQL", "Excel", "Pandas"],
-                "original_url": "https://www.getonbrd.com/jobs/data-scientist-yape",
-                "sector_detected": "Tecnología",
-            },
-            {
-                "title": "Frontend Developer React.js",
-                "company": "Platzi",
-                "location_raw": "Perú (Remoto)",
-                "salary_raw": "USD 2,000 - USD 3,500",
-                "modality": "remoto",
-                "skills_detected": ["React", "JavaScript", "TypeScript", "CSS"],
-                "original_url": "https://www.getonbrd.com/jobs/frontend-react-platzi",
-                "sector_detected": "Tecnología",
-            },
-            {
-                "title": "Analista de Datos y Reportería Excel",
-                "company": "Rímac Seguros",
-                "location_raw": "Lima, San Isidro",
-                "salary_raw": "S/ 4,000 - S/ 6,000",
-                "modality": "híbrido",
-                "skills_detected": ["Excel", "Power BI", "SQL", "Python"],
-                "original_url": "https://www.getonbrd.com/jobs/analista-datos-rimac",
-                "sector_detected": "Tecnología",
-            },
-            {
-                "title": "DevOps Engineer",
-                "company": "Niubiz",
-                "location_raw": "Lima, Perú",
-                "salary_raw": "USD 2,800 - USD 4,200",
-                "modality": "híbrido",
-                "skills_detected": ["AWS", "Kubernetes", "Terraform", "Docker"],
-                "original_url": "https://www.getonbrd.com/jobs/devops-niubiz",
-                "sector_detected": "Tecnología",
-            },
-        ]

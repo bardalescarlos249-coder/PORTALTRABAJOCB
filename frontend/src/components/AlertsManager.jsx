@@ -5,9 +5,11 @@ import { apiBase } from '../api/client';
 export default function AlertsManager() {
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  
+  const [statusMsg, setStatusMsg] = useState(null); // {type: 'success'|'error', text: '...'}
+
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -22,9 +24,11 @@ export default function AlertsManager() {
       if (res.ok) {
         const data = await res.json();
         setAlerts(data);
+      } else {
+        setStatusMsg({ type: 'error', text: `Error del servidor (${res.status}). Verifica que Render esté activo.` });
       }
     } catch (e) {
-      console.error("Error fetching subscriptions", e);
+      setStatusMsg({ type: 'error', text: 'No se pudo conectar con el servidor. Puede estar iniciando (espera 1 min).' });
     } finally {
       setLoading(false);
     }
@@ -36,25 +40,33 @@ export default function AlertsManager() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setSaving(true);
+    setStatusMsg(null);
     try {
-      const url = editingId 
-        ? `${apiBase}/api/subscriptions/${editingId}` 
+      const url = editingId
+        ? `${apiBase}/api/subscriptions/${editingId}`
         : `${apiBase}/api/subscriptions`;
-      
+
       const res = await fetch(url, {
         method: editingId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
       });
-      
+
       if (res.ok) {
         setShowForm(false);
         setEditingId(null);
         setFormData({ name: '', email: '', keyword: '', frequency: 'daily' });
+        setStatusMsg({ type: 'success', text: `✅ Alerta guardada correctamente para ${formData.email}` });
         fetchAlerts();
+      } else {
+        const errText = await res.text();
+        setStatusMsg({ type: 'error', text: `Error al guardar (${res.status}): ${errText}` });
       }
     } catch (e) {
-      console.error("Error saving subscription", e);
+      setStatusMsg({ type: 'error', text: 'No se pudo conectar con el servidor. Intenta en 1 minuto.' });
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -67,15 +79,19 @@ export default function AlertsManager() {
     });
     setEditingId(alert.id);
     setShowForm(true);
+    setStatusMsg(null);
   };
 
   const handleDelete = async (id) => {
     if (!window.confirm("¿Seguro que deseas eliminar esta alerta?")) return;
     try {
       const res = await fetch(`${apiBase}/api/subscriptions/${id}`, { method: 'DELETE' });
-      if (res.ok) fetchAlerts();
+      if (res.ok) {
+        setStatusMsg({ type: 'success', text: '🗑️ Alerta eliminada.' });
+        fetchAlerts();
+      }
     } catch (e) {
-      console.error("Error deleting", e);
+      setStatusMsg({ type: 'error', text: 'Error al eliminar.' });
     }
   };
 
@@ -96,6 +112,7 @@ export default function AlertsManager() {
               setFormData({ name: '', email: '', keyword: '', frequency: 'daily' });
               setEditingId(null);
               setShowForm(true);
+              setStatusMsg(null);
             }}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-semibold transition-colors"
           >
@@ -103,6 +120,16 @@ export default function AlertsManager() {
           </button>
         )}
       </div>
+
+      {/* Status Message Banner */}
+      {statusMsg && (
+        <div className={`mb-4 px-4 py-3 rounded-xl text-sm font-medium flex items-center justify-between ${
+          statusMsg.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-800 border border-red-200'
+        }`}>
+          <span>{statusMsg.text}</span>
+          <button onClick={() => setStatusMsg(null)} className="ml-3 opacity-60 hover:opacity-100">✕</button>
+        </div>
+      )}
 
       {showForm && (
         <form onSubmit={handleSubmit} className="bg-slate-50 p-5 rounded-xl border border-slate-200 mb-6 animate-in fade-in slide-in-from-top-4">
@@ -132,8 +159,9 @@ export default function AlertsManager() {
             <button type="button" onClick={() => setShowForm(false)} className="text-sm font-semibold text-slate-600 hover:text-slate-800 px-3 py-2">
               Cancelar
             </button>
-            <button type="submit" className="flex items-center gap-2 bg-slate-900 hover:bg-black text-white px-5 py-2 rounded-lg text-sm font-semibold transition-colors">
-              <Save size={14} /> Guardar
+            <button type="submit" disabled={saving} className="flex items-center gap-2 bg-slate-900 hover:bg-black disabled:opacity-60 text-white px-5 py-2 rounded-lg text-sm font-semibold transition-colors">
+              {saving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+              {saving ? 'Guardando...' : 'Guardar'}
             </button>
           </div>
         </form>

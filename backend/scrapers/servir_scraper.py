@@ -1,6 +1,6 @@
 """
 Servir scraper - portal oficial del sector público peruano.
-URL: https://app.servir.gob.pe/DifusionOfertasExterno/faces/consultas/ofertas_laborales.xhtml
+Usa el endpoint de búsqueda HTML sin mock fallback.
 """
 import logging
 import re
@@ -11,6 +11,7 @@ from backend.scrapers.base_scraper import BaseScraper
 logger = logging.getLogger(__name__)
 
 SERVIR_BASE = "https://app.servir.gob.pe/DifusionOfertasExterno/faces/consultas/ofertas_laborales.xhtml"
+SERVIR_LIST = "https://app.servir.gob.pe/DifusionOfertasExterno/rest/ofertaLaboral/listarOfertaLaboralPublico"
 
 
 class ServirScraper(BaseScraper):
@@ -18,100 +19,82 @@ class ServirScraper(BaseScraper):
     base_url = SERVIR_BASE
 
     def build_search_url(self, filters: Dict[str, Any]) -> str:
-        keyword = filters.get("keyword", "")
-        page = filters.get("_page", 1)
-        # Servir uses a JSF page with POST-based pagination; we use GET with params for initial load
-        return SERVIR_BASE
+        self._keyword = filters.get("keyword", "").lower()
+        self.session.headers.update({
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "Referer": SERVIR_BASE,
+            "Origin": "https://app.servir.gob.pe",
+        })
+        return SERVIR_LIST
 
     def fetch_search_results(self, url: str) -> Optional[str]:
-        return self.fetch(url)
+        try:
+            payload = {"pagina": 1, "cantReg": 20, "descCargo": self._keyword or ""}
+            response = self.session.post(url, json=payload, timeout=20)
+            if response.status_code == 200:
+                return response.text
+        except Exception as e:
+            logger.warning(f"[servir] API error: {e}")
+        return None
 
     def parse_job_cards(self, html: str) -> List[Dict[str, Any]]:
-        soup = BeautifulSoup(html, "lxml")
-        jobs = []
+        if not html:
+            return []
+        try:
+            import json
+            data = json.loads(html)
+            # Could be list directly or nested
+            items = data if isinstance(data, list) else data.get("data", data.get("list", []))
+            jobs = []
+            for item in items:
+                title = item.get("descCargo") or item.get("cargo") or item.get("titulo", "")
+                company = item.get("entidad") or item.get("nombreEntidad", "SERVIR")
+                location = item.get("region") or item.get("lugar", "Perú")
+                salary = item.get("remuneracion") or item.get("sueldo")
+                if salary:
+                    salary = f"S/ {salary}"
+                deadline = item.get("fecCierre") or item.get("fechaCierre")
+                job_id = item.get("idOferta") or item.get("id", "")
+                url = f"{SERVIR_BASE}#oferta-{job_id}" if job_id else SERVIR_BASE
+                if title and len(title) > 3:
+                    jobs.append({
+                        "title": title,
+                        "company": company,
+                        "location_raw": location,
+                        "salary_raw": salary,
+                        "application_deadline": str(deadline) if deadline else None,
+                        "original_url": url,
+                        "job_type": "CAS",
+                        "sector_detected": "Público",
+                    })
+            return jobs
+        except Exception as e:
+            logger.error(f"[servir] parse error: {e}")
+            # Fallback: try HTML scraping of the main page
+            return self._parse_html_fallback(html)
 
-        # Try table rows
-        table = soup.find("table", id=re.compile(r"formBusqueda|ofertasTable|.*:tabla.*", re.IGNORECASE))
-        if not table:
-            table = soup.find("table", class_=re.compile(r".*tabla.*|.*oferta.*|.*resultado.*", re.IGNORECASE))
-        if not table:
-            # Find any data table
+    def _parse_html_fallback(self, html: str) -> List[Dict[str, Any]]:
+        try:
+            soup = BeautifulSoup(html, "lxml")
+            jobs = []
             tables = soup.find_all("table")
             for t in tables:
                 rows = t.find_all("tr")
                 if len(rows) > 2:
-                    table = t
-                    break
-
-        if not table:
-            logger.warning("[servir] No table found, falling back to mock data")
-            return self._get_mock_jobs()
-
-        rows = table.find_all("tr")
-        headers = []
-        for row in rows:
-            cells = row.find_all(["th", "td"])
-            if not headers and any(c.name == "th" for c in cells):
-                headers = [c.get_text(strip=True).lower() for c in cells]
-                continue
-            if not cells:
-                continue
-
-            values = [c.get_text(strip=True) for c in cells]
-            if len(values) < 3:
-                continue
-
-            links = []
-            for a in row.find_all("a", href=True):
-                href = a["href"]
-                if href and not href.startswith("javascript"):
-                    full = href if href.startswith("http") else f"https://app.servir.gob.pe{href}"
-                    links.append(full)
-
-            job = {
-                "title": values[0] if len(values) > 0 else "",
-                "company": values[1] if len(values) > 1 else "",
-                "location_raw": values[2] if len(values) > 2 else "Perú",
-                "salary_raw": values[3] if len(values) > 3 else None,
-                "publication_date_raw": values[4] if len(values) > 4 else None,
-                "application_deadline": values[5] if len(values) > 5 else None,
-                "original_url": links[0] if links else SERVIR_BASE,
-                "source_job_id": values[0][:50] if values else None,
-                "job_type": "CAS",
-                "sector_detected": "Público",
-            }
-
-            if job["title"] and len(job["title"]) > 3:
-                jobs.append(job)
-
-        if not jobs:
-            return self._get_mock_jobs()
-
-        return jobs
-
-    def _get_mock_jobs(self) -> List[Dict[str, Any]]:
-        """Return mock Servir jobs when scraping fails (site may require JS session)."""
-        return [
-            {
-                "title": "Especialista en Geología",
-                "company": "Ministerio de Energía y Minas - MINEM",
-                "location_raw": "Lima, Lima",
-                "salary_raw": "S/ 5,500",
-                "publication_date_raw": "2024-04-25",
-                "application_deadline": "2024-05-15",
-                "original_url": "https://app.servir.gob.pe/DifusionOfertasExterno/faces/consultas/ofertas_laborales.xhtml",
-                "job_type": "CAS",
-                "sector_detected": "Público",
-            },
-            {
-                "title": "Analista Administrativo",
-                "company": "Ministerio de Educación - MINEDU",
-                "location_raw": "Lima, Lima",
-                "salary_raw": "S/ 3,200",
-                "publication_date_raw": "2024-04-22",
-                "application_deadline": "2024-05-10",
-                "original_url": "https://app.servir.gob.pe/DifusionOfertasExterno/faces/consultas/ofertas_laborales.xhtml",
-                "job_type": "CAS",
-                "sector_detected": "Público",
-            },
-        ]
+                    for row in rows[1:]:
+                        cells = row.find_all("td")
+                        values = [c.get_text(strip=True) for c in cells]
+                        if len(values) >= 3 and values[0] and len(values[0]) > 3:
+                            links = [a["href"] for a in row.find_all("a", href=True) if not a["href"].startswith("javascript")]
+                            jobs.append({
+                                "title": values[0],
+                                "company": values[1] if len(values) > 1 else "SERVIR",
+                                "location_raw": values[2] if len(values) > 2 else "Perú",
+                                "original_url": links[0] if links else SERVIR_BASE,
+                                "job_type": "CAS",
+                                "sector_detected": "Público",
+                            })
+            return jobs
+        except Exception:
+            return []
