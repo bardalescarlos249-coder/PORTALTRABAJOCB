@@ -10,10 +10,13 @@ const ALL_SOURCES = [
   "indeed", "getonboard", "jooble", "infojobs", "opcionempleo"
 ];
 
+import AlertsManager from './components/AlertsManager';
+
 function App() {
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('todos');
+  const [activeView, setActiveView] = useState('buscador'); // buscador, analytics, alertas
   const [stats, setStats] = useState({ total: 0, sources: 0, unique_companies: 0 });
   const [lastSearch, setLastSearch] = useState(null);
   const [searchStatus, setSearchStatus] = useState('');
@@ -22,40 +25,59 @@ function App() {
   const handleSearch = useCallback(async (filters) => {
     setLoading(true);
     setActiveTab('todos');
-    setSearchStatus('Iniciando scraping en 9 portales...');
-    setScrapingProgress(10);
+    setSearchStatus('Iniciando búsqueda en 9 portales (puede tomar un minuto)...');
+    setScrapingProgress(5);
 
     try {
-      // 1. Live scraping across ALL sources
-      try {
-        setSearchStatus('Consultando portales en tiempo real...');
-        setScrapingProgress(30);
+      // 1. Start Async Search
+      const startRes = await fetch(`${apiBase}/api/search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          keyword: filters.keyword || "",
+          location: filters.location || "",
+          modality: filters.modality || "",
+          job_type: filters.job_type || "",
+          seniority: filters.seniority || "",
+          career_area: filters.career_area || "",
+          sector: filters.sector || "",
+          salary_min: filters.salary_min ? parseFloat(filters.salary_min) : null,
+          salary_max: filters.salary_max ? parseFloat(filters.salary_max) : null,
+          sources: ALL_SOURCES,
+          max_pages: 1,
+        })
+      });
+      
+      if (!startRes.ok) throw new Error('Failed to start search');
+      const runData = await startRes.json();
+      const runId = runData.id;
 
-        await fetch(`${apiBase}/api/scrape/run`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            keyword: filters.keyword || "",
-            location: filters.location || "",
-            modality: filters.modality || "",
-            job_type: filters.job_type || "",
-            seniority: filters.seniority || "",
-            career_area: filters.career_area || "",
-            sector: filters.sector || "",
-            salary_min: filters.salary_min ? parseFloat(filters.salary_min) : null,
-            salary_max: filters.salary_max ? parseFloat(filters.salary_max) : null,
-            sources: ALL_SOURCES,
-            max_pages: 1,
-          })
-        });
-        setScrapingProgress(75);
-        setSearchStatus('Normalizando y filtrando resultados...');
-      } catch (e) {
-        console.warn('Scraping en vivo no disponible, cargando desde base de datos.');
-        setSearchStatus('Cargando desde base de datos local...');
+      // 2. Poll for completion
+      let isCompleted = false;
+      let progress = 10;
+      while (!isCompleted) {
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Poll every 3s
+        progress = Math.min(progress + 5, 90);
+        setScrapingProgress(progress);
+        
+        try {
+          const pollRes = await fetch(`${apiBase}/api/search/runs/${runId}`);
+          if (pollRes.ok) {
+            const statusData = await pollRes.json();
+            if (statusData.status === 'completed' || statusData.status === 'failed') {
+              isCompleted = true;
+            }
+          }
+        } catch (pollErr) {
+          console.warn("Polling error:", pollErr);
+          // Keep polling, might be a temporary network hiccup
+        }
       }
 
-      // 2. Fetch filtered results from DB
+      setScrapingProgress(95);
+      setSearchStatus('Normalizando y filtrando resultados...');
+
+      // 3. Fetch filtered results from DB
       const params = new URLSearchParams();
       if (filters.keyword) params.append('keyword', filters.keyword);
       if (filters.location) params.append('location', filters.location);
@@ -84,8 +106,15 @@ function App() {
       setSearchStatus(`✓ ${items.length} ofertas encontradas en ${new Set(items.map(j => j.source)).size} portales`);
     } catch (error) {
       console.error('Error fetching jobs:', error);
-      setSearchStatus('Error al buscar. Intenta nuevamente.');
-      setJobs([]);
+      setSearchStatus('Error al buscar. Cargando últimos datos de la base de datos...');
+      
+      // Fallback: try loading from DB anyway
+      try {
+        const fallbackRes = await fetch(`${apiBase}/api/jobs?page_size=100`);
+        const fallbackData = await fallbackRes.json();
+        const items = fallbackData.items || fallbackData || [];
+        setJobs(items);
+      } catch(e) {}
     } finally {
       setLoading(false);
       setTimeout(() => setScrapingProgress(0), 1000);
@@ -152,9 +181,9 @@ function App() {
               {ALL_SOURCES.length} portales activos
             </div>
             <nav className="flex space-x-5 text-sm font-medium text-slate-500">
-              <a href="#" className="text-slate-900 font-semibold">Buscador</a>
+              <button onClick={() => setActiveView('buscador')} className={`${activeView === 'buscador' ? 'text-slate-900 font-semibold' : 'hover:text-slate-900'} transition-colors`}>Buscador</button>
+              <button onClick={() => setActiveView('alertas')} className={`${activeView === 'alertas' ? 'text-slate-900 font-semibold' : 'hover:text-slate-900'} transition-colors`}>Alertas (Correos)</button>
               <a href="#" className="hover:text-slate-900 transition-colors">Analytics</a>
-              <a href="#" className="hover:text-slate-900 transition-colors">Fuentes</a>
             </nav>
           </div>
         </div>
@@ -171,85 +200,90 @@ function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-
-        {/* Hero Search */}
-        <section className="text-center py-10">
-          <div className="inline-flex items-center gap-2 text-xs font-semibold text-blue-600 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-full mb-5">
-            <Zap size={12} />
-            Búsqueda en tiempo real · 9 portales simultáneos
-          </div>
-          <h2 className="text-4xl sm:text-5xl font-bold tracking-tight text-slate-900 mb-3">
-            Encuentra tu próxima
-            <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent"> oportunidad</span>
-          </h2>
-          <p className="text-base text-slate-500 max-w-2xl mx-auto mb-8">
-            Rastreamos en tiempo real Servir, Computrabajo, Bumeran, Laborum, Indeed, GetOnBoard, Jooble, InfoJobs y OpcionEmpleo.
-          </p>
-          <div className="max-w-5xl mx-auto text-left">
-            <SearchBar onSearch={handleSearch} isLoading={loading} />
-          </div>
-
-          {/* Search Status */}
-          {searchStatus && (
-            <div className={`mt-4 text-sm font-medium transition-all ${loading ? 'text-blue-600' : 'text-emerald-600'}`}>
-              {loading && <RefreshCw size={13} className="inline mr-1.5 animate-spin" />}
-              {searchStatus}
-            </div>
-          )}
-        </section>
-
-        {/* Stats */}
-        <section className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          {[
-            { icon: Briefcase, label: 'Ofertas encontradas', value: stats.total, color: 'blue', bg: 'from-blue-500 to-indigo-500' },
-            { icon: Building2, label: 'Portales consultados', value: stats.sources, color: 'purple', bg: 'from-purple-500 to-pink-500' },
-            { icon: TrendingUp, label: 'Empresas únicas', value: stats.unique_companies, color: 'emerald', bg: 'from-emerald-500 to-teal-500' },
-          ].map(({ icon: Icon, label, value, color, bg }) => (
-            <div key={label} className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm flex items-center gap-4">
-              <div className={`w-11 h-11 bg-gradient-to-br ${bg} rounded-xl flex items-center justify-center shadow-md flex-shrink-0`}>
-                <Icon size={20} className="text-white" />
+        {activeView === 'alertas' ? (
+          <AlertsManager />
+        ) : (
+          <>
+            {/* Hero Search */}
+            <section className="text-center py-10">
+              <div className="inline-flex items-center gap-2 text-xs font-semibold text-blue-600 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-full mb-5">
+                <Zap size={12} />
+                Búsqueda asíncrona · 9 portales simultáneos
               </div>
-              <div>
-                <p className="text-2xl font-bold text-slate-900">{value}</p>
-                <p className="text-xs text-slate-500 font-medium">{label}</p>
+              <h2 className="text-4xl sm:text-5xl font-bold tracking-tight text-slate-900 mb-3">
+                Encuentra tu próxima
+                <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent"> oportunidad</span>
+              </h2>
+              <p className="text-base text-slate-500 max-w-2xl mx-auto mb-8">
+                Rastreamos en tiempo real Servir, Computrabajo, Bumeran, Laborum, Indeed, GetOnBoard, Jooble, InfoJobs y OpcionEmpleo.
+              </p>
+              <div className="max-w-5xl mx-auto text-left">
+                <SearchBar onSearch={handleSearch} isLoading={loading} />
               </div>
-            </div>
-          ))}
-        </section>
 
-        {/* Results Panel */}
-        <section className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-          {/* Panel Header */}
-          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <h3 className="text-lg font-bold text-slate-900">Resultados de búsqueda</h3>
-              {activeTab !== 'todos' && (
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Mostrando {displayedJobs.length} de {jobs.length} ofertas • Fuente: <span className="font-semibold capitalize">{activeTab}</span>
-                </p>
+              {/* Search Status */}
+              {searchStatus && (
+                <div className={`mt-4 text-sm font-medium transition-all ${loading ? 'text-blue-600' : 'text-emerald-600'}`}>
+                  {loading && <RefreshCw size={13} className="inline mr-1.5 animate-spin" />}
+                  {searchStatus}
+                </div>
               )}
-            </div>
-            <button
-              onClick={handleExport}
-              className="flex items-center gap-2 text-sm font-semibold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 px-4 py-2 rounded-xl shadow-sm transition-all"
-            >
-              <Download size={14} />
-              Exportar Excel
-            </button>
-          </div>
+            </section>
 
-          {/* Source Tabs */}
-          <SourceTabs
-            jobs={jobs}
-            activeTab={activeTab}
-            onTabChange={setActiveTab}
-            sourceCounts={sourceCounts}
-            sourceColors={sourceColors}
-          />
+            {/* Stats */}
+            <section className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {[
+                { icon: Briefcase, label: 'Ofertas encontradas', value: stats.total, color: 'blue', bg: 'from-blue-500 to-indigo-500' },
+                { icon: Building2, label: 'Portales consultados', value: stats.sources, color: 'purple', bg: 'from-purple-500 to-pink-500' },
+                { icon: TrendingUp, label: 'Empresas únicas', value: stats.unique_companies, color: 'emerald', bg: 'from-emerald-500 to-teal-500' },
+              ].map(({ icon: Icon, label, value, color, bg }) => (
+                <div key={label} className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm flex items-center gap-4">
+                  <div className={`w-11 h-11 bg-gradient-to-br ${bg} rounded-xl flex items-center justify-center shadow-md flex-shrink-0`}>
+                    <Icon size={20} className="text-white" />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-slate-900">{value}</p>
+                    <p className="text-xs text-slate-500 font-medium">{label}</p>
+                  </div>
+                </div>
+              ))}
+            </section>
 
-          {/* Job Table */}
-          <JobTable jobs={displayedJobs} isLoading={loading} />
-        </section>
+            {/* Results Panel */}
+            <section className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+              {/* Panel Header */}
+              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Resultados de búsqueda</h3>
+                  {activeTab !== 'todos' && (
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Mostrando {displayedJobs.length} de {jobs.length} ofertas • Fuente: <span className="font-semibold capitalize">{activeTab}</span>
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={handleExport}
+                  className="flex items-center gap-2 text-sm font-semibold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 px-4 py-2 rounded-xl shadow-sm transition-all"
+                >
+                  <Download size={14} />
+                  Exportar Excel
+                </button>
+              </div>
+
+              {/* Source Tabs */}
+              <SourceTabs
+                jobs={jobs}
+                activeTab={activeTab}
+                onTabChange={setActiveTab}
+                sourceCounts={sourceCounts}
+                sourceColors={sourceColors}
+              />
+
+              {/* Job Table */}
+              <JobTable jobs={displayedJobs} isLoading={loading} />
+            </section>
+          </>
+        )}
       </main>
     </div>
   );

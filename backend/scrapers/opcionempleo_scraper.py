@@ -34,7 +34,7 @@ class OpcionempleaScraper(BaseScraper):
 
     def parse_job_cards(self, html: str) -> List[Dict[str, Any]]:
         if not html:
-            return self._mock_jobs()
+            return []
 
         try:
             from bs4 import BeautifulSoup
@@ -76,7 +76,7 @@ class OpcionempleaScraper(BaseScraper):
             return jobs if jobs else self._mock_jobs()
         except Exception as e:
             logger.error(f"[opcionempleo] parse error: {e}")
-            return self._mock_jobs()
+            return []
 
     def _mock_jobs(self) -> List[Dict[str, Any]]:
         return [

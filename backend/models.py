@@ -77,3 +77,15 @@ class Source(Base):
     last_status = Column(String, default="pending")
     notes = Column(Text, nullable=True)
     job_count = Column(Integer, default=0)
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+
+    id = Column(String, primary_key=True, default=gen_uuid)
+    name = Column(String, nullable=False)
+    email = Column(String, nullable=False)
+    keyword = Column(String, nullable=False)
+    frequency = Column(String, default="daily") # daily, weekly
+    status = Column(String, default="active") # active, inactive
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_sent_at = Column(DateTime, nullable=True)

@@ -40,7 +40,7 @@ class LaborumScraper(BaseScraper):
 
     def parse_job_cards(self, html: str) -> List[Dict[str, Any]]:
         if not html:
-            return self._mock_jobs()
+            return []
 
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(html, "lxml")

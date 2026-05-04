@@ -38,7 +38,7 @@ class GetonboardScraper(BaseScraper):
 
     def parse_job_cards(self, html: str) -> List[Dict[str, Any]]:
         if not html:
-            return self._mock_jobs()
+            return []
 
         try:
             data = json.loads(html)
@@ -99,7 +99,7 @@ class GetonboardScraper(BaseScraper):
 
         except Exception as e:
             logger.error(f"[getonboard] parse error: {e}")
-            return self._mock_jobs()
+            return []
 
     def _mock_jobs(self) -> List[Dict[str, Any]]:
         return [

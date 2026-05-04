@@ -124,6 +124,14 @@ def trigger_search(request: SearchRequest, background_tasks: BackgroundTasks, db
 def list_runs(limit: int = 10, db: Session = Depends(get_db)):
     return db.query(SearchRun).order_by(SearchRun.started_at.desc()).limit(limit).all()
 
+@router.get("/search/runs/{run_id}", response_model=SearchRunOut)
+def get_run(run_id: str, db: Session = Depends(get_db)):
+    from fastapi import HTTPException
+    run = db.query(SearchRun).filter(SearchRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return run
+
 
 @router.post("/scrape/run", response_model=SearchRunOut)
 def manual_scrape(request: SearchRequest, db: Session = Depends(get_db)):

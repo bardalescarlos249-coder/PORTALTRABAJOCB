@@ -44,7 +44,7 @@ class ComputrabajoScraper(BaseScraper):
 
     def parse_job_cards(self, html: str) -> List[Dict[str, Any]]:
         if not html:
-            return self._mock_jobs()
+            return []
 
         soup = BeautifulSoup(html, "lxml")
         jobs = []
@@ -57,7 +57,7 @@ class ComputrabajoScraper(BaseScraper):
 
         if not cards:
             logger.warning("[computrabajo] No job cards found, using mock")
-            return self._mock_jobs()
+            return []
 
         for card in cards:
             try:
